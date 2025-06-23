@@ -5,18 +5,13 @@ import torch
 from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from model.main_model_ablation_03 import Model
+from model.main_model_ablation_CMSA import Model
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, precision_score, recall_score, confusion_matrix
 import argparse
-import re
-from datetime import datetime
-import pandas as pd
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main(args):
-    checkpoint_dir = '/media/robert/4TB-SSD/checkpoints'
-    os.makedirs(checkpoint_dir, exist_ok=True)
     if not args.learn:
         seed_all(args.seed)
         data_opts = {'fstride': 1,
@@ -142,37 +137,11 @@ def main(args):
     cls_criterion = nn.BCELoss()
     reg_criterion = nn.MSELoss()
 
-    ######################################保持pt文件 用于复现模型
-
-    # 只取路径的最后一级作为模型名
-    model_folder_name = os.path.basename(os.path.normpath(args.set_path))
-    # checkpoint_dir = 'checkpoints'
-    # os.makedirs(checkpoint_dir, exist_ok=True)  # 确保目录存在
-
-    # 扫一遍 checkpoints/ 里所有以 "model_folder_name_" 开头、".pt" 结尾的
-    pattern = re.compile(rf'^{re.escape(model_folder_name)}_(\d+)\.pt$')
-    versions = []
-    for fn in os.listdir(checkpoint_dir):
-        m = pattern.match(fn)
-        if m:
-            versions.append(int(m.group(1)))
-
-    # 下一个版本号
-    next_ver = max(versions) + 1 if versions else 0
-    # 格式化成两位，比如 00, 01, 02…
-    ver_str = f"{next_ver:02d}"
-
-    checkpoint_filename = f"{model_folder_name}_{ver_str}.pt"
-    checkpoint_filepath = os.path.join(checkpoint_dir, checkpoint_filename)
-    writer = SummaryWriter('logs/{}'.format(model_folder_name))  # 生成tensorboard的路径
-
-    ##############################################
-
-    # model_folder_name = args.set_path + '_' + args.bh
-    # os.makedirs('checkpoints', exist_ok=True)
-    # checkpoint_filepath = os.path.join('checkpoints', model_folder_name + '.pt')
-    # # checkpoint_filepath = 'checkpoints/{}.pt'.format(model_folder_name)
-    # writer = SummaryWriter('logs/{}'.format(model_folder_name))
+    model_folder_name = args.set_path + '_' + args.bh
+    os.makedirs('checkpoints', exist_ok=True)
+    checkpoint_filepath = os.path.join('checkpoints', model_folder_name + '.pt')
+    # checkpoint_filepath = 'checkpoints/{}.pt'.format(model_folder_name)
+    writer = SummaryWriter('logs/{}'.format(model_folder_name))
 
     train(model, train_loader, valid_loader, cls_criterion, reg_criterion, optimizer, checkpoint_filepath, writer, args=args)
 
@@ -193,50 +162,8 @@ def main(args):
     recall_s = recall_score(label_cpu, np.round(pred_cpu))
     auc = roc_auc_score(label_cpu, np.round(pred_cpu))
     matrix = confusion_matrix(label_cpu, np.round(pred_cpu))
-    tn, fp, fn, tp = confusion_matrix(label_cpu, np.round(pred_cpu)).ravel()
 
     print(f'Acc: {acc}\n f1: {f1}\n precision_score: {pre_s}\n recall_score: {recall_s}\n roc_auc_score: {auc}\n confusion_matrix: {matrix}')
-
-    #################################### 自动保持excel文件
-    # log to Excel
-    excel_path = os.path.join(checkpoint_dir, 'experiments_location_ablation_bkns_8.xlsx')
-
-    record = {
-        'checkpoint': checkpoint_filename,
-        'location': model_folder_name + '.pt',
-        'mode': 'train_val_test',
-        'epochs': args.epochs,
-        'lr': args.lr,
-        'batch_size': args.batch_size,
-        'times_num': args.times_num,
-        'accuracy': acc,
-        'f1': f1,
-        'precision': pre_s,
-        'recall': recall_s,
-        'auc': auc,
-        'tn': tn,
-        'fp': fp,
-        'fn': fn,
-        'tp': tp,
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'drop_out': args.time_transformer_dropout,
-        'num_layers': args.num_layers,
-        'num_bnks': args.num_bnks,
-        'bnks_layers': args.bnks_layers,
-        'weight_decay': args.weight_decay,
-    }
-
-    if os.path.exists(excel_path):
-        df = pd.read_excel(excel_path)
-        new_row = pd.DataFrame([record])
-        df = pd.concat([df, new_row], ignore_index=True)
-    else:
-        df = pd.DataFrame([record])
-    df.to_excel(excel_path, index=False)
-
-    print(f"Experiment logged to {excel_path}")
-    ####################################
-
 
 
 if __name__ == '__main__':
@@ -259,7 +186,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_layers', type=int, default=4, help='the number of layers.')
     parser.add_argument('--times_num', type=int, default=32, help='')
     parser.add_argument('--num_bnks', type=int, default=9, help='')
-    parser.add_argument('--bnks_layers', type=int, default=8, help='')
+    parser.add_argument('--bnks_layers', type=int, default=9, help='')
     parser.add_argument('--sta_f', type=int, default=8)
     parser.add_argument('--end_f', type=int, default=12)
     parser.add_argument('--learn', action='store_true',help='If set, generate random data instead of real dataset')

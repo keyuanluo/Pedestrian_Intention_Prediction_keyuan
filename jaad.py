@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from model.main_model import Model
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, precision_score, recall_score, confusion_matrix
 import argparse
+import re
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -16,7 +17,7 @@ def main(args):
         seed_all(args.seed)
         data_opts = {'fstride': 1,
                     'sample_type': args.bh,  # 'beh'
-                    'subset': 'default',
+                    'subset': 'test_valide_change',
                     'height_rng': [0, float('inf')],
                     'squarify_ratio': 0,
                     'data_split_type': 'default',  # kfold, random, default
@@ -31,14 +32,14 @@ def main(args):
         imdb = JAAD(data_path=args.set_path)
         seq_train = imdb.generate_data_trajectory_sequence('train', **data_opts)
         balanced_seq_train = balance_dataset(seq_train)
-        tte_seq_train, traj_seq_train = tte_dataset(balanced_seq_train, tte, 0.6, args.times_num)
+        tte_seq_train, traj_seq_train = tte_dataset(balanced_seq_train, tte, 0.8, args.times_num)
 
         seq_valid = imdb.generate_data_trajectory_sequence('val', **data_opts)
         balanced_seq_valid = balance_dataset(seq_valid)
-        tte_seq_valid, traj_seq_valid = tte_dataset(balanced_seq_valid, tte, 0, args.times_num)
+        tte_seq_valid, traj_seq_valid = tte_dataset(balanced_seq_valid, tte, 0.8, args.times_num)
 
         seq_test = imdb.generate_data_trajectory_sequence('test', **data_opts)
-        tte_seq_test, traj_seq_test = tte_dataset(seq_test, tte, 0, args.times_num)
+        tte_seq_test, traj_seq_test = tte_dataset(seq_test, tte, 0.8, args.times_num)
 
         bbox_train = tte_seq_train['bbox']
         bbox_valid = tte_seq_valid['bbox']
@@ -110,9 +111,34 @@ def main(args):
     cls_criterion = nn.BCELoss()
     reg_criterion = nn.MSELoss()
 
-    model_folder_name = args.set_path + '_' + args.bh
-    os.makedirs('checkpoints', exist_ok=True)
-    checkpoint_filepath = os.path.join('checkpoints', model_folder_name + '.pt')
+
+
+    # 取数据集目录最后一级 + '_' + bh
+    base_name = os.path.basename(os.path.normpath(args.set_path))
+    model_folder_name = f"{base_name}_{args.bh}"
+
+    # 固定绝对目录
+    checkpoint_dir = '/home/robert/桌面/PedCMT-main/checkpoints'
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # 匹配已有的 JAAD_beh_XX.pt
+    pattern = re.compile(rf'^{re.escape(model_folder_name)}_(\d+)\.pt$')
+    versions = []
+    for fn in os.listdir(checkpoint_dir):
+        m = pattern.match(fn)
+        if m:
+            versions.append(int(m.group(1)))
+
+    # 下一个版本号
+    next_ver = max(versions) + 1 if versions else 0
+    ver_str = f"{next_ver:02d}"
+
+    # 最终文件名
+    checkpoint_filename = f"{model_folder_name}_{ver_str}.pt"
+    checkpoint_filepath = os.path.join(checkpoint_dir, checkpoint_filename)
+    ############3
+
+
     # checkpoint_filepath = 'checkpoints/{}.pt'.format(model_folder_name)
     writer = SummaryWriter('logs/{}'.format(model_folder_name))
 
@@ -147,24 +173,20 @@ if __name__ == '__main__':
     parser.add_argument('--bh', type=str, default='beh', help='all or beh, in JAAD dataset.')
     parser.add_argument('--balance', type=bool, default=True, help='balance or not for test dataset.')
     parser.add_argument('--seed', type=int, default=42)
-
     parser.add_argument('--d_model', type=int, default=256, help='the dimension after embedding.')
     parser.add_argument('--dff', type=int, default=512, help='the number of the units.')
     parser.add_argument('--num_heads', type=int, default=8, help='number of the heads of the multi-head model.')
     parser.add_argument('--bbox_input', type=int, default=4, help='dimension of bbox.')
     parser.add_argument('--vel_input', type=int, default=1, help='dimension of velocity.')
     parser.add_argument('--time_crop', type=bool, default=False)
-
     parser.add_argument('--batch_size', type=int, default=64, help='size of batch.')
-    parser.add_argument('--lr', type=float, default=0.001, help='learning rate to train.')
-
+    parser.add_argument('--lr', type=float, default=0.0001, help='learning rate to train.')
     parser.add_argument('--num_layers', type=int, default=4, help='the number of layers.')
     parser.add_argument('--times_num', type=int, default=32, help='')
     parser.add_argument('--num_bnks', type=int, default=9, help='')
     parser.add_argument('--bnks_layers', type=int, default=9, help='')
     parser.add_argument('--sta_f', type=int, default=8)
     parser.add_argument('--end_f', type=int, default=12)
-
     parser.add_argument('--learn', action='store_true',
                         help='If set, generate random data instead of real dataset')
 

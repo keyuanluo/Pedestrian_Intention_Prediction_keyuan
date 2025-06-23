@@ -24,6 +24,7 @@ def binary_acc(label, pred):
     acc = correct_results_sum / pred.shape[0]
     return acc
 
+
 def end_point_loss(reg_criterion, pred, end_point):
     for i in range(4):
         if i == 0 or i == 2:
@@ -35,139 +36,193 @@ def end_point_loss(reg_criterion, pred, end_point):
     return reg_criterion(pred, end_point)
 
 
-def train(model, train_loader, valid_loader, class_criterion, reg_criterion, optimizer, checkpoint_filepath, writer,
+
+import os
+import pandas as pd
+from datetime import datetime
+
+def train(model,
+          train_loader,
+          valid_loader,
+          test_loader,
+          class_criterion,
+          reg_criterion,
+          optimizer,
+          checkpoint_filepath,
+          writer,
           args):
-    best_valid_acc = 0.0
-    improvement_ratio = 0.001
-    best_valid_loss = np.inf
-    num_steps_wo_improvement = 0
-    save_times = 0
-    epochs = args.epochs
-    if args.learn: # 调试模式： epoch = 5
-        epochs = 5
+    # 1) 准备输出目录和记录容器
+    excel_dir = '/media/robert/4TB-SSD/checkpoints/each_epoch_test'
+    os.makedirs(excel_dir, exist_ok=True)
+    excel_path = os.path.join(excel_dir, 'test_metrics_per_epoch_01.xlsx')
+    records = []
+
+    best_valid_loss = float('inf')
+    no_improve = 0
+    max_no_improve = 300
+    epochs = 5 if args.learn else args.epochs
     time_crop = args.time_crop
-    for epoch in range(epochs):
-        nb_batches_train = len(train_loader)
-        train_acc = 0
+
+    for epoch in range(1, epochs + 1):
+        # —— A) 训练一个 epoch （省略） —— #
         model.train()
-        f_losses = 0.0
-        cls_losses = 0.0
-        reg_losses = 0.0
+        # for bbox, bbox_motion, label, vel, traj in train_loader:
+        #     # ... 完整的训练步骤 ...
 
-        print('Epoch: {} training...'.format(epoch + 1))
-        for bbox, label, vel, traj in train_loader:
-            label = label.reshape(-1, 1).to(device).float()
+        for bbox, bbox_motion, label, vel, traj in train_loader:
+            label = label.view(-1, 1).to(device).float()
             bbox = bbox.to(device)
+            bbox_motion = bbox_motion.to(device)
             vel = vel.to(device)
-            end_point = traj.to(device)[:, -1, :]
+            end_point = traj.to(device)[:, -1, :4]
 
+            # 可选的时间裁剪
             if np.random.randint(10) >= 5 and time_crop:
                 crop_size = np.random.randint(args.sta_f, args.end_f)
                 bbox = bbox[:, -crop_size:, :]
                 vel = vel[:, -crop_size:, :]
 
-            pred, point, s_cls, s_reg = model(bbox, vel)
+            # 前向
+            preds, points, s_cls, s_reg = model(bbox, bbox_motion, vel)  # 如果 forward 接收 decode-tra j 作为第四个参数
+            # 损失
+            cls_loss = class_criterion(preds, label)
+            reg_loss = reg_criterion(points, end_point)
+            full_loss = cls_loss / (s_cls ** 2) + reg_loss / (s_reg ** 2) + torch.log(s_cls) + torch.log(s_reg)
 
-            cls_loss = class_criterion(pred, label)
-            reg_loss = reg_criterion(point, end_point)
-            f_loss = cls_loss / (s_cls * s_cls) + reg_loss / (s_reg * s_reg) + torch.log(s_cls) + torch.log(s_reg)
+            # 反向更新
+            optimizer.zero_grad()
+            full_loss.backward()
+            optimizer.step()
 
-            model.zero_grad()  #
-            f_loss.backward()
 
-            f_losses += f_loss.item()
-            cls_losses += cls_loss.item()
-            reg_losses += reg_loss.item()
-
-            optimizer.step()  #
-
-            train_acc += binary_acc(label, torch.round(pred))
-
-        writer.add_scalar('training full_loss',
-                          f_losses / nb_batches_train,
-                          epoch + 1)
-        writer.add_scalar('training cls_loss',
-                          cls_losses / nb_batches_train,
-                          epoch + 1)
-        writer.add_scalar('training reg_loss',
-                          reg_losses / nb_batches_train,
-                          epoch + 1)
-        writer.add_scalar('training Acc',
-                          train_acc / nb_batches_train,
-                          epoch + 1)
-
-        print(
-            f"Epoch {epoch + 1}: | Train_Loss {f_losses / nb_batches_train} | Train Cls_loss {cls_losses / nb_batches_train} | Train Reg_loss {reg_losses / nb_batches_train} | Train_Acc {train_acc / nb_batches_train} ")
-
-        valid_f_loss, valid_cls_loss, valid_reg_loss, val_acc = evaluate(model, valid_loader, class_criterion,
-                                                                         reg_criterion)
-
-        writer.add_scalar('validation full_loss',
-                          valid_f_loss,
-                          epoch + 1)
-        writer.add_scalar('validation cls_loss',
-                          valid_cls_loss,
-                          epoch + 1)
-        writer.add_scalar('validation reg_loss',
-                          valid_reg_loss,
-                          epoch + 1)
-        writer.add_scalar('validation Acc',
-                          val_acc,
-                          epoch + 1)
-
-        if best_valid_loss > valid_cls_loss:
-            best_valid_loss = valid_cls_loss
-            num_steps_wo_improvement = 0
-            save_times += 1
-            print(str(save_times) + ' time(s) File saved.\n')
+        # —— B) 验证集评估，决定 checkpoint —— #
+        metrics_val = evaluate(
+            model, valid_loader, class_criterion, reg_criterion, split_name='Valid'
+        )
+        if metrics_val['cls_loss'] < best_valid_loss:
+            best_valid_loss = metrics_val['cls_loss']
+            no_improve = 0
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'Accuracy': train_acc / nb_batches_train,
-                'LOSS': f_losses / nb_batches_train,
             }, checkpoint_filepath)
-            print('Update improvement.\n')
         else:
-            num_steps_wo_improvement += 1
-            print(str(num_steps_wo_improvement) + '/300 times Not update.\n')
+            no_improve += 1
+            if no_improve >= max_no_improve:
+                print("Early stopping")
+                break
 
-        if num_steps_wo_improvement == 300:
-            print("Early stopping on epoch:{}".format(str(epoch + 1)))
-            break
-    print('save file times: ' + str(save_times) + '.\n')
+        # —— C) 测试集评估 —— #
+        metrics_test = evaluate(
+            model, test_loader, class_criterion, reg_criterion, split_name='Test'
+        )
+
+        # —— D) 把 test 的指标 append 到 records —— #
+        records.append({
+            'epoch':       epoch,
+            'test_loss':   metrics_test['full_loss'],
+            'test_acc':    metrics_test['accuracy'],
+            'test_f1':     metrics_test['f1'],
+            'test_prec':   metrics_test['precision'],
+            'test_rec':    metrics_test['recall'],
+            'test_auc':    metrics_test['auc'],
+            'timestamp':   datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        })
 
 
-def evaluate(model, val_data, class_criterion, reg_criterion):
-    nb_batches = len(val_data)
-    val_f_losses = 0.0
-    val_cls_losses = 0.0
-    val_reg_losses = 0.0
-    print('in Validation...')
+        print(
+            f"Epoch {epoch}: "
+            f"loss={metrics_test['full_loss']:.4f}  "
+            f"acc={metrics_test['accuracy']:.4f}  "
+            f"f1={metrics_test['f1']:.4f}  "
+            f"prec={metrics_test['precision']:.4f}  "
+            f"rec={metrics_test['recall']:.4f}  "
+            f"auc={metrics_test['auc']:.4f}"
+        )
+
+    # —— E) 全部 epoch 完毕后，一次性写入 Excel —— #
+    df = pd.DataFrame(records)
+    df.to_excel(excel_path, index=False)
+    print(f"\n训练结束，测试集指标已保存到 {excel_path}")
+
+
+
+
+
+def evaluate(model,
+             data_loader,
+             class_criterion,
+             reg_criterion,
+             split_name='Eval'):
+    """
+    在 data_loader（验证集或测试集）上跑一次，返回所有指标的字典，并打印：
+      loss, accuracy, f1, precision, recall, auc
+    split_name 用于打印时区分："Valid" 或 "Test"
+    """
+    model.eval()
+    nb = len(data_loader)
+    sum_full, sum_cls, sum_reg = 0.0, 0.0, 0.0
+    all_preds, all_labels = [], []
+
     with torch.no_grad():
-        model.eval()
-        acc = 0
-        for bbox, label, vel, traj in val_data:
-            label = label.reshape(-1, 1).to(device).float()
+        for bbox, bbox_motion, label, vel, traj in data_loader:
+            label = label.reshape(-1,1).to(device).float()
             bbox = bbox.to(device)
+            bbox_motion = bbox_motion.to(device)
             vel = vel.to(device)
-            end_point = traj.to(device)[:, -1, :]
+            end_point = traj.to(device)[:, -1, :4]
 
-            pred, point, s_cls, s_reg = model(bbox, vel)
+            preds, points, s_cls, s_reg = model(bbox, bbox_motion, vel)
 
-            val_cls_loss = class_criterion(pred, label)
-            val_reg_loss = reg_criterion(point, end_point)
-            f_loss = val_cls_loss / (s_cls * s_cls) + val_reg_loss / (s_reg * s_reg) + torch.log(s_cls) + torch.log(
-                s_reg)
+            cls_loss = class_criterion(preds, label).item()
+            reg_loss = reg_criterion(points, end_point).item()
+            full_loss = (
+                cls_loss/(s_cls**2).item()
+                + reg_loss/(s_reg**2).item()
+                + torch.log(s_cls).item()
+                + torch.log(s_reg).item()
+            )
 
-            val_f_losses += f_loss.item()
-            val_cls_losses += val_cls_loss.item()
-            val_reg_losses += val_reg_loss.item()
+            sum_full += full_loss
+            sum_cls  += cls_loss
+            sum_reg  += reg_loss
 
-            acc += binary_acc(label, torch.round(pred))
+            all_preds.append(preds.cpu())
+            all_labels.append(label.cpu())
+
+    # 拼接所有 batch
+    preds_cat = torch.cat(all_preds).numpy().ravel()
+    labs_cat  = torch.cat(all_labels).numpy().ravel().astype(int)
+
+    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+    metrics = {
+        'full_loss': sum_full/nb,
+        'cls_loss':  sum_cls/nb,
+        'reg_loss':  sum_reg/nb,
+        'accuracy':  accuracy_score(labs_cat, preds_cat>0.5),
+        'f1':        f1_score(labs_cat, preds_cat>0.5),
+        'precision': precision_score(labs_cat, preds_cat>0.5),
+        'recall':    recall_score(labs_cat, preds_cat>0.5),
+        'auc':       roc_auc_score(labs_cat, preds_cat),
+    }
+
+    # 把所有指标都打印出来
     print(
-        f'Valid_Full_Loss {val_f_losses / nb_batches} | Valid Cls_loss {val_cls_losses / nb_batches} | Valid Reg_loss {val_reg_losses / nb_batches} | Valid_Acc {acc / nb_batches} \n')
-    return val_f_losses / nb_batches, val_cls_losses / nb_batches, val_reg_losses / nb_batches, acc / nb_batches
+        f">>> {split_name}: "
+        f"loss={metrics['full_loss']:.4f}  "
+        f"acc={metrics['accuracy']:.4f}  "
+        f"f1={metrics['f1']:.4f}  "
+        f"prec={metrics['precision']:.4f}  "
+        f"rec={metrics['recall']:.4f}  "
+        f"auc={metrics['auc']:.4f}"
+    )
+    return metrics
+
+
+
+
+
 
 
 def test(model, test_data):
@@ -175,12 +230,13 @@ def test(model, test_data):
     with torch.no_grad():
         model.eval()
         step = 0
-        for bbox, label, vel, traj in test_data:
+        for bbox, bbox_motion, label, vel, traj in test_data:
             label = label.reshape(-1, 1).to(device).float()
             bbox = bbox.to(device)
+            bbox_motion = bbox_motion.to(device)
             vel = vel.to(device)
 
-            pred, _, _, _ = model(bbox, vel)
+            pred, _, _, _ = model(bbox, bbox_motion, vel)
 
             if step == 0:
                 preds = pred
@@ -344,6 +400,7 @@ def normalize_bbox(dataset, width=1920, height=1080):
 
     return normalized_set
 
+
 def normalize_traj(dataset, width=1920, height=1080):
     normalized_set = []
     for sequence in dataset:
@@ -352,10 +409,10 @@ def normalize_traj(dataset, width=1920, height=1080):
         normalized_sequence = []
         for bbox in sequence:
             np_bbox = np.zeros(4)
-            np_bbox[0] = bbox[0]# / width
-            np_bbox[2] = bbox[2]# / width
-            np_bbox[1] = bbox[1]# / height
-            np_bbox[3] = bbox[3]# / height
+            np_bbox[0] = bbox[0]  # / width
+            np_bbox[2] = bbox[2]  # / width
+            np_bbox[1] = bbox[1]  # / height
+            np_bbox[3] = bbox[3]  # / height
             normalized_sequence.append(np_bbox)
         normalized_set.append(np.array(normalized_sequence))
 
@@ -371,49 +428,34 @@ def prepare_label(dataset):
 
     return labels
 
+
 def pad_sequence(inp_list, max_len):
     padded_sequence = []
     for source in inp_list:
         target = np.array([source[0]] * max_len)
         source = source
         target[-source.shape[0]:, :] = source
-        
+
         padded_sequence.append(target)
-        
+
     return padded_sequence
 
 
-# ############### new for 插值特征函数
-# def add_interp_features(bbox_array: np.ndarray) -> np.ndarray:
-#     """
-#     bbox_array: shape (num_seqs, seq_len, 4)
-#     returns:    shape (num_seqs, seq_len, 8)
-#     新增的后 4 维是 (bbox[t] + bbox[t-1]) / 2, t=0 时可以设为全 0 或跟 bbox[0] 相同
-#     """
-#     num, T, _ = bbox_array.shape
-#     interp = np.zeros_like(bbox_array)
-#     # 从 t=1 开始用前后帧平均
-#     interp[:, 1:, :] = (bbox_array[:, 1:, :] + bbox_array[:, :-1, :]) / 2.0
-#     # t=0，你可以选择全 0，也可以直接复制第一帧
-#     interp[:, 0, :] = bbox_array[:, 0, :]
-#     # 拼接：新的特征维度就是原来的4维 + 4维插值
-#     return np.concatenate([bbox_array, interp], axis=-1)
-#
-# import numpy as np
 
-def add_delta_features(bbox_list):
+
+def make_motion_features(bbox_list):
     """
-    bbox_list: List[np.ndarray] 或 List[list]，每个元素 shape=(T_i, 4)
-    return:     List[np.ndarray]，每个元素 shape=(T_i, 8)
-                 后 4 维是相邻帧差分：bbox[t] - bbox[t-1]，t=0 时全 0
-    """
+   bbox_list: List[np.ndarray] 或 List[list]，每个元素 shape=(T_i, 4)
+   return:     List[np.ndarray]，每个元素 shape=(T_i, 4)
+                每帧 Δ = bbox[t] - bbox[t-1] (t=0 时全 0)
+   """
+
     out = []
     for seq in bbox_list:
-        arr = np.asarray(seq, dtype=np.float32)           # (T,4)
-        delta = np.zeros_like(arr)                        # (T,4)
+
+        arr = np.asarray(seq, dtype=np.float32)  # (T,4)
+        delta = np.zeros_like(arr)   # (T,4)
         if arr.shape[0] > 1:
             delta[1:] = arr[1:] - arr[:-1]
-        # delta[0] 保持为 0
-        out.append(np.concatenate([arr, delta], axis=-1)) # (T,8)
+            out.append(delta)
     return out
-

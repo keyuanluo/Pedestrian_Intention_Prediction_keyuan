@@ -890,7 +890,7 @@ class PIE(object):
                   'height_rng': [0, float('inf')],
                   'squarify_ratio': 0,
                   'data_split_type': 'default',  # kfold, random, default
-                  'seq_type': 'intention',
+                  'seq_type': 'crossing',
                   'min_track_size': 15,
                   'random_params': {'ratios': None,
                                     'val_data': True,

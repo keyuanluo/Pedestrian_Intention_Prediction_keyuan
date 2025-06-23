@@ -544,7 +544,7 @@ class JAAD(object):
             if sample_type == 'beh':
                 pids.extend([p for p in annotations[vid]['ped_annotations'].keys() if 'b' in p])
             else:
-                pids.extend(annotations[vid]['ped_annotaions'].keys())
+                pids.extend(annotations[vid]['ped_annotations'].keys())
         return pids
     
     def _get_random_pedestrian_ids(self, image_set, ratios=None, val_data=True, regen_data=False, sample_type='all'):
@@ -713,7 +713,7 @@ class JAAD(object):
             num_frames = annotations[vid]['num_frames']
             for i in range(0, num_frames, frame_stride):
                 ped_samples[join(self._jaad_path, 'image', vid, '{:05d}.png'.format(i))] = []
-            for pid in annotations[vid]['ped_annotaions']:
+            for pid in annotations[vid]['ped_annotations']:
                 if params['data_split_type'] != 'default' and pid not in _pids:
                     continue
                 difficult = 0
@@ -992,7 +992,7 @@ class JAAD(object):
                 if 'b' not in pid:
                     intent = [[0]] * len(boxes)
                 else:
-                    if annot_database[vid]['ped_annotaions'][pid]['attributes']['crossing'] == -1:
+                    if annot_database[vid]['ped_annotations'][pid]['attributes']['crossing'] == -1:
                         intent = [[0]] * len(boxes)
                     else:
                         intent = [[1]] * len(boxes)

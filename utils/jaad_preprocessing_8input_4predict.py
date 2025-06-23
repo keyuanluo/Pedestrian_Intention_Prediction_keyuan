@@ -24,6 +24,7 @@ def binary_acc(label, pred):
     acc = correct_results_sum / pred.shape[0]
     return acc
 
+
 def end_point_loss(reg_criterion, pred, end_point):
     for i in range(4):
         if i == 0 or i == 2:
@@ -43,7 +44,7 @@ def train(model, train_loader, valid_loader, class_criterion, reg_criterion, opt
     num_steps_wo_improvement = 0
     save_times = 0
     epochs = args.epochs
-    if args.learn: # 调试模式： epoch = 5
+    if args.learn:  # 调试模式： epoch = 5
         epochs = 5
     time_crop = args.time_crop
     for epoch in range(epochs):
@@ -59,7 +60,7 @@ def train(model, train_loader, valid_loader, class_criterion, reg_criterion, opt
             label = label.reshape(-1, 1).to(device).float()
             bbox = bbox.to(device)
             vel = vel.to(device)
-            end_point = traj.to(device)[:, -1, :]
+            end_point = traj.to(device)[:, -1, :4]
 
             if np.random.randint(10) >= 5 and time_crop:
                 crop_size = np.random.randint(args.sta_f, args.end_f)
@@ -130,9 +131,9 @@ def train(model, train_loader, valid_loader, class_criterion, reg_criterion, opt
             print('Update improvement.\n')
         else:
             num_steps_wo_improvement += 1
-            print(str(num_steps_wo_improvement) + '/300 times Not update.\n')
+            print(str(num_steps_wo_improvement) + '/3000 times Not update.\n')
 
-        if num_steps_wo_improvement == 300:
+        if num_steps_wo_improvement == 3000:
             print("Early stopping on epoch:{}".format(str(epoch + 1)))
             break
     print('save file times: ' + str(save_times) + '.\n')
@@ -151,7 +152,7 @@ def evaluate(model, val_data, class_criterion, reg_criterion):
             label = label.reshape(-1, 1).to(device).float()
             bbox = bbox.to(device)
             vel = vel.to(device)
-            end_point = traj.to(device)[:, -1, :]
+            end_point = traj.to(device)[:, -1, :4]
 
             pred, point, s_cls, s_reg = model(bbox, vel)
 
@@ -344,6 +345,7 @@ def normalize_bbox(dataset, width=1920, height=1080):
 
     return normalized_set
 
+
 def normalize_traj(dataset, width=1920, height=1080):
     normalized_set = []
     for sequence in dataset:
@@ -352,10 +354,10 @@ def normalize_traj(dataset, width=1920, height=1080):
         normalized_sequence = []
         for bbox in sequence:
             np_bbox = np.zeros(4)
-            np_bbox[0] = bbox[0]# / width
-            np_bbox[2] = bbox[2]# / width
-            np_bbox[1] = bbox[1]# / height
-            np_bbox[3] = bbox[3]# / height
+            np_bbox[0] = bbox[0]  # / width
+            np_bbox[2] = bbox[2]  # / width
+            np_bbox[1] = bbox[1]  # / height
+            np_bbox[3] = bbox[3]  # / height
             normalized_sequence.append(np_bbox)
         normalized_set.append(np.array(normalized_sequence))
 
@@ -371,15 +373,16 @@ def prepare_label(dataset):
 
     return labels
 
+
 def pad_sequence(inp_list, max_len):
     padded_sequence = []
     for source in inp_list:
         target = np.array([source[0]] * max_len)
         source = source
         target[-source.shape[0]:, :] = source
-        
+
         padded_sequence.append(target)
-        
+
     return padded_sequence
 
 
@@ -409,11 +412,11 @@ def add_delta_features(bbox_list):
     """
     out = []
     for seq in bbox_list:
-        arr = np.asarray(seq, dtype=np.float32)           # (T,4)
-        delta = np.zeros_like(arr)                        # (T,4)
+        arr = np.asarray(seq, dtype=np.float32)  # (T,4)
+        delta = np.zeros_like(arr)  # (T,4)
         if arr.shape[0] > 1:
             delta[1:] = arr[1:] - arr[:-1]
         # delta[0] 保持为 0
-        out.append(np.concatenate([arr, delta], axis=-1)) # (T,8)
+        out.append(np.concatenate([arr, delta], axis=-1))  # (T,8)
     return out
 
