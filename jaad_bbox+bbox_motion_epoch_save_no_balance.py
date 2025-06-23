@@ -784,7 +784,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Pedestrain Crossing Intention Prediction.')
     parser.add_argument('--epochs', type=int, default=5000, help='Number of epochs to train.')
     parser.add_argument('--set_path', type=str, default='/home/robert/桌面/Pedestrian_Crossing_Intention_Prediction-main/JAAD')
-    parser.add_argument('--bh', type=str, default='all', help='all or beh, in JAAD dataset.')
+    parser.add_argument('--bh', type=str, default='beh', help='all or beh, in JAAD dataset.')
     parser.add_argument('--balance', type=bool, default=True, help='balance or not for test dataset.')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--d_model', type=int, default=256, help='the dimension after embedding.')
